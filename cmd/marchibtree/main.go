@@ -13,15 +13,19 @@ import (
 
 func main() {
 	addr := flag.String("addr", envOr("MARCHIBTREE_ADDR", ":7100"), "listen address")
-	dataDir := flag.String("dataDir", envOr("MARCHIBTREE_DATA", "./data"), "data directory (unused until persist)")
+	dataDir := flag.String("dataDir", envOr("MARCHIBTREE_DATA", "./data"), "data directory (heap.db + meta)")
 	pageSize := flag.Int("pageSize", btree.DefaultPageSize, "page size in bytes")
 	syncWAL := flag.Bool("sync", true, "fsync WAL on commit (unused until WAL)")
 	flag.Parse()
 	_ = dataDir
 	_ = syncWAL
 
-	tree := btree.New(*pageSize)
-	log.Printf("marchibtree listening on %s (in-memory pages=%d)", *addr, *pageSize)
+	tree, err := btree.Open(*dataDir, *pageSize)
+	if err != nil {
+		log.Fatalf("open %s: %v", *dataDir, err)
+	}
+	defer tree.Close()
+	log.Printf("marchibtree listening on %s dataDir=%s pageSize=%d", *addr, *dataDir, *pageSize)
 	log.Fatal(http.ListenAndServe(*addr, newServer(tree)))
 }
 
@@ -35,7 +39,7 @@ func newServer(tree *btree.Tree) http.Handler {
 			"pages":    tree.PageCount(),
 			"root":     tree.Root(),
 			"height":   tree.Height(),
-			"walLSN":   0,
+			"walLSN":   tree.LSN(),
 			"pageSize": tree.PageSize(),
 		})
 	})
@@ -60,6 +64,13 @@ func newServer(tree *btree.Tree) http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write(v)
+	})
+	mux.HandleFunc("POST /internal/checkpoint", func(w http.ResponseWriter, _ *http.Request) {
+		if err := tree.Checkpoint(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /debug/tree", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

@@ -11,7 +11,7 @@ See [PLAN.md](PLAN.md) for slices.
 
 ## Slice 1
 
-In-memory 4 KiB pages, leaf split, GET/PUT, `/debug/tree`. Persistence and WAL land later.
+In-memory 4 KiB pages, leaf split, GET/PUT, `/debug/tree`. `POST /internal/checkpoint` flushes dirty pages to `heap.db`.
 
 ```bash
 go test ./...

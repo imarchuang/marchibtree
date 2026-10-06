@@ -99,3 +99,44 @@ func TestDebugTreeAfterSplits(t *testing.T) {
 		t.Fatalf("height=%d", tree.Height())
 	}
 }
+
+func TestHTTPCheckpointReopen(t *testing.T) {
+	dir := t.TempDir()
+	tree, err := btree.Open(dir, btree.DefaultPageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(newServer(tree))
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/kv/persist", strings.NewReader("yes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("put status=%d", res.StatusCode)
+	}
+	res, err = http.Post(srv.URL+"/internal/checkpoint", "text/plain", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("checkpoint status=%d", res.StatusCode)
+	}
+	srv.Close()
+	tree.Close()
+
+	tree2, err := btree.Open(dir, btree.DefaultPageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree2.Close()
+	v, ok := tree2.Get("persist")
+	if !ok || string(v) != "yes" {
+		t.Fatalf("reopen got %q ok=%v", v, ok)
+	}
+}
