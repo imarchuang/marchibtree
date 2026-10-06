@@ -140,3 +140,38 @@ func TestHTTPCheckpointReopen(t *testing.T) {
 		t.Fatalf("reopen got %q ok=%v", v, ok)
 	}
 }
+
+func TestHTTPDelete(t *testing.T) {
+	tree := btree.New(btree.DefaultPageSize)
+	srv := httptest.NewServer(newServer(tree))
+	defer srv.Close()
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/kv/x", strings.NewReader("1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	req, err = http.NewRequest(http.MethodDelete, srv.URL+"/kv/x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status=%d", res.StatusCode)
+	}
+	res, err = http.Get(srv.URL + "/kv/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("get after delete status=%d", res.StatusCode)
+	}
+}

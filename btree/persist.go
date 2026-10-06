@@ -9,10 +9,11 @@ import (
 )
 
 type metaFile struct {
-	RootPageID PageID `json:"rootPageID"`
-	PageSize   int    `json:"pageSize"`
-	NextPageID PageID `json:"nextPageID"`
-	Height     int    `json:"height"`
+	RootPageID PageID   `json:"rootPageID"`
+	PageSize   int      `json:"pageSize"`
+	NextPageID PageID   `json:"nextPageID"`
+	Height     int      `json:"height"`
+	Free       []PageID `json:"free,omitempty"`
 }
 
 type checkpointFile struct {
@@ -71,12 +72,17 @@ func OpenSync(dir string, pageSize int, syncWAL bool) (*Tree, error) {
 			heap:     heap,
 			dirty:    make(map[PageID]struct{}),
 			syncWAL:  syncWAL,
+			free:     append([]PageID(nil), meta.Free...),
 		}
 		if t.height < 1 {
 			t.height = 1
 		}
 		if t.nextID == 0 {
 			t.nextID = 1
+		}
+		freeSet := make(map[PageID]struct{}, len(t.free))
+		for _, id := range t.free {
+			freeSet[id] = struct{}{}
 		}
 		corrupt := false
 		buf := make([]byte, pageSize)
@@ -88,15 +94,22 @@ func OpenSync(dir string, pageSize int, syncWAL bool) (*Tree, error) {
 				return nil, fmt.Errorf("read page %d: %w", id, err)
 			}
 			if n < pageSize {
-				corrupt = true
+				if _, ok := freeSet[id]; !ok {
+					corrupt = true
+				}
 				continue
 			}
 			p, err := decodePage(buf)
 			if err != nil {
-				corrupt = true
+				if _, ok := freeSet[id]; !ok {
+					corrupt = true
+				}
 				continue
 			}
 			t.pages[p.id] = p
+		}
+		for id := range freeSet {
+			delete(t.pages, id)
 		}
 		if _, ok := t.pages[t.root]; !ok {
 			corrupt = true
@@ -161,6 +174,7 @@ func (t *Tree) checkpointLocked() error {
 		PageSize:   t.pageSize,
 		NextPageID: t.nextID,
 		Height:     t.height,
+		Free:       append([]PageID(nil), t.free...),
 	}
 	if err := writeJSONAtomic(filepath.Join(t.dir, "meta.json"), meta); err != nil {
 		return err

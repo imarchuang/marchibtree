@@ -39,6 +39,7 @@ func newServer(tree *btree.Tree) http.Handler {
 			"height":   tree.Height(),
 			"walLSN":   tree.LSN(),
 			"pageSize": tree.PageSize(),
+			"free":     tree.FreeCount(),
 		})
 	})
 	mux.HandleFunc("PUT /kv/{key}", func(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +51,18 @@ func newServer(tree *btree.Tree) http.Handler {
 		}
 		if err := tree.Put(key, body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("DELETE /kv/{key}", func(w http.ResponseWriter, r *http.Request) {
+		ok, err := tree.Delete(r.PathValue("key"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.NotFound(w, r)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
