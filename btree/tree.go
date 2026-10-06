@@ -3,6 +3,7 @@ package btree
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 )
@@ -19,6 +20,10 @@ type Tree struct {
 	root     PageID
 	nextID   PageID
 	height   int
+	dir      string
+	heap     *os.File
+	dirty    map[PageID]struct{}
+	lsn      uint64
 }
 
 func New(pageSize int) *Tree {
@@ -31,9 +36,24 @@ func New(pageSize int) *Tree {
 		root:     0,
 		nextID:   1,
 		height:   1,
+		dirty:    make(map[PageID]struct{}),
 	}
 	t.pages[0] = newLeaf(0)
+	t.markDirty(0)
 	return t
+}
+
+func (t *Tree) markDirty(id PageID) {
+	if t.dirty == nil {
+		t.dirty = make(map[PageID]struct{})
+	}
+	t.dirty[id] = struct{}{}
+}
+
+func (t *Tree) LSN() uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lsn
 }
 
 func (t *Tree) PageSize() int { return t.pageSize }
@@ -136,6 +156,7 @@ func (t *Tree) putLocked(k, v []byte) error {
 	if i, ok := leaf.search(k); ok {
 		old := leaf.vals[i]
 		leaf.vals[i] = v
+		t.markDirty(leaf.id)
 		if leaf.fits(t.pageSize) {
 			return nil
 		}
@@ -146,6 +167,7 @@ func (t *Tree) putLocked(k, v []byte) error {
 		return t.splitUp(path)
 	}
 	leaf.insertLeaf(k, v)
+	t.markDirty(leaf.id)
 	if leaf.fits(t.pageSize) {
 		return nil
 	}
@@ -166,11 +188,14 @@ func (t *Tree) splitUp(path []PageID) error {
 			if err != nil {
 				return err
 			}
+			t.markDirty(p.id)
+			t.markDirty(right.id)
 			if len(path) == 1 {
 				newRoot := t.allocInternal()
 				newRoot.extra = p.id
 				newRoot.keys = [][]byte{sep}
 				newRoot.kids = []PageID{p.id, right.id}
+				t.markDirty(newRoot.id)
 				t.root = newRoot.id
 				t.height++
 				path = []PageID{newRoot.id, p.id}
@@ -178,6 +203,7 @@ func (t *Tree) splitUp(path []PageID) error {
 			}
 			parent := t.pages[path[len(path)-2]]
 			parent.insertInternal(sep, right.id)
+			t.markDirty(parent.id)
 		}
 		if len(path) == 1 {
 			return nil
@@ -202,8 +228,11 @@ func (t *Tree) splitPage(p *page) (sep []byte, right *page, err error) {
 		right.next = p.next
 		if p.next != 0 {
 			t.pages[p.next].prev = right.id
+			t.markDirty(p.next)
 		}
 		p.next = right.id
+		t.markDirty(p.id)
+		t.markDirty(right.id)
 		sep = cloneBytes(right.keys[0])
 		return sep, right, nil
 	}
@@ -222,6 +251,7 @@ func (t *Tree) allocLeaf() *page {
 	t.nextID++
 	p := newLeaf(id)
 	t.pages[id] = p
+	t.markDirty(id)
 	return p
 }
 
@@ -230,6 +260,7 @@ func (t *Tree) allocInternal() *page {
 	t.nextID++
 	p := newInternal(id)
 	t.pages[id] = p
+	t.markDirty(id)
 	return p
 }
 
