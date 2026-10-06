@@ -1,18 +1,19 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/marchi/marchibtree/store"
+	"github.com/marchi/marchibtree/btree"
 )
 
 func TestHealthzAndKV(t *testing.T) {
-	kv := store.NewMem()
-	srv := httptest.NewServer(newServer(kv, 4096))
+	tree := btree.New(btree.DefaultPageSize)
+	srv := httptest.NewServer(newServer(tree))
 	defer srv.Close()
 
 	res, err := http.Get(srv.URL + "/healthz")
@@ -58,5 +59,43 @@ func TestHealthzAndKV(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != http.StatusNotFound {
 		t.Fatalf("missing status=%d", res.StatusCode)
+	}
+}
+
+func TestDebugTreeAfterSplits(t *testing.T) {
+	tree := btree.New(btree.DefaultPageSize)
+	srv := httptest.NewServer(newServer(tree))
+	defer srv.Close()
+
+	for i := 0; i < 400; i++ {
+		k := fmt.Sprintf("k%06d", i)
+		req, err := http.NewRequest(http.MethodPut, srv.URL+"/kv/"+k, strings.NewReader("v"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusNoContent {
+			t.Fatalf("put %s status=%d", k, res.StatusCode)
+		}
+	}
+	res, err := http.Get(srv.URL + "/debug/tree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dump, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("debug status=%d", res.StatusCode)
+	}
+	s := string(dump)
+	if !strings.Contains(s, "internal") {
+		t.Fatalf("expected split (internal node) in dump:\n%s", s)
+	}
+	if tree.Height() < 2 {
+		t.Fatalf("height=%d", tree.Height())
 	}
 }

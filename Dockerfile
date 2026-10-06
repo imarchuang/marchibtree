@@ -3,7 +3,7 @@
 FROM golang:1.22-alpine AS build
 WORKDIR /src
 COPY go.mod ./
-COPY store ./store
+COPY btree ./btree
 COPY cmd ./cmd
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/marchibtree ./cmd/marchibtree
 

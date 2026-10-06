@@ -9,9 +9,9 @@ point get and range scan. No SQL, no MVCC.
 
 See [PLAN.md](PLAN.md) for slices.
 
-## Slice 0
+## Slice 1
 
-In-memory HTTP map. Persistence, pages, and WAL land in later slices.
+In-memory 4 KiB pages, leaf split, GET/PUT, `/debug/tree`. Persistence and WAL land later.
 
 ```bash
 go test ./...
@@ -19,6 +19,7 @@ go run ./cmd/marchibtree -addr=:7100
 curl -X PUT localhost:7100/kv/a -d 1
 curl localhost:7100/kv/a
 curl localhost:7100/healthz
+curl localhost:7100/debug/tree
 ```
 
 **Docker:**
