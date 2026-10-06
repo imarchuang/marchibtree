@@ -26,6 +26,7 @@ type Tree struct {
 	syncWAL  bool
 	dirty    map[PageID]struct{}
 	lsn      uint64
+	free     []PageID
 }
 
 func New(pageSize int) *Tree {
@@ -69,6 +70,18 @@ func (t *Tree) PageCount() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.pages)
+}
+
+func (t *Tree) NextPageID() PageID {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.nextID
+}
+
+func (t *Tree) FreeCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.free)
 }
 
 func (t *Tree) Put(key string, value []byte) error {
@@ -251,9 +264,19 @@ func (t *Tree) splitPage(p *page) (sep []byte, right *page, err error) {
 	return sep, right, nil
 }
 
-func (t *Tree) allocLeaf() *page {
+func (t *Tree) allocID() PageID {
+	if n := len(t.free); n > 0 {
+		id := t.free[n-1]
+		t.free = t.free[:n-1]
+		return id
+	}
 	id := t.nextID
 	t.nextID++
+	return id
+}
+
+func (t *Tree) allocLeaf() *page {
+	id := t.allocID()
 	p := newLeaf(id)
 	t.pages[id] = p
 	t.markDirty(id)
@@ -261,8 +284,7 @@ func (t *Tree) allocLeaf() *page {
 }
 
 func (t *Tree) allocInternal() *page {
-	id := t.nextID
-	t.nextID++
+	id := t.allocID()
 	p := newInternal(id)
 	t.pages[id] = p
 	t.markDirty(id)

@@ -99,6 +99,9 @@ func (t *Tree) applyWAL(rec walRec) error {
 			return fmt.Errorf("wal value: %w", err)
 		}
 		return t.putLocked([]byte(rec.Key), v)
+	case "delete":
+		t.deleteLocked(rec.Key)
+		return nil
 	default:
 		return fmt.Errorf("unknown wal op %q", rec.Op)
 	}
