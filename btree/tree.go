@@ -22,6 +22,8 @@ type Tree struct {
 	height   int
 	dir      string
 	heap     *os.File
+	wal      *os.File
+	syncWAL  bool
 	dirty    map[PageID]struct{}
 	lsn      uint64
 }
@@ -77,6 +79,9 @@ func (t *Tree) Put(key string, value []byte) error {
 	v := cloneBytes(value)
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if err := t.walAppend("put", key, v); err != nil {
+		return err
+	}
 	return t.putLocked(k, v)
 }
 

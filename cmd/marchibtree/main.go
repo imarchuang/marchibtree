@@ -15,12 +15,10 @@ func main() {
 	addr := flag.String("addr", envOr("MARCHIBTREE_ADDR", ":7100"), "listen address")
 	dataDir := flag.String("dataDir", envOr("MARCHIBTREE_DATA", "./data"), "data directory (heap.db + meta)")
 	pageSize := flag.Int("pageSize", btree.DefaultPageSize, "page size in bytes")
-	syncWAL := flag.Bool("sync", true, "fsync WAL on commit (unused until WAL)")
+	syncWAL := flag.Bool("sync", true, "fsync WAL on commit")
 	flag.Parse()
-	_ = dataDir
-	_ = syncWAL
 
-	tree, err := btree.Open(*dataDir, *pageSize)
+	tree, err := btree.OpenSync(*dataDir, *pageSize, *syncWAL)
 	if err != nil {
 		log.Fatalf("open %s: %v", *dataDir, err)
 	}
