@@ -1,0 +1,14 @@
+services:
+  marchibtree:
+    build: .
+    image: marchibtree:local
+    ports:
+      - "7100:7100"
+    volumes:
+      - marchibtree-data:/data
+    environment:
+      MARCHIBTREE_ADDR: ":7100"
+      MARCHIBTREE_DATA: /data
+
+volumes:
+  marchibtree-data:

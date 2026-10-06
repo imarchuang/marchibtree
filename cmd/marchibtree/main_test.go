@@ -175,3 +175,37 @@ func TestHTTPDelete(t *testing.T) {
 		t.Fatalf("get after delete status=%d", res.StatusCode)
 	}
 }
+
+func TestHTTPRange(t *testing.T) {
+	tree := btree.New(btree.DefaultPageSize)
+	srv := httptest.NewServer(newServer(tree))
+	defer srv.Close()
+	for i := 0; i < 20; i++ {
+		k := fmt.Sprintf("k%02d", i)
+		req, err := http.NewRequest(http.MethodPut, srv.URL+"/kv/"+k, strings.NewReader("v"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+	}
+	res, err := http.Get(srv.URL + "/kv?start=k05&end=k08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("range status=%d body=%s", res.StatusCode, body)
+	}
+	s := string(body)
+	if !strings.Contains(s, `"key":"k05"`) || !strings.Contains(s, `"key":"k07"`) {
+		t.Fatalf("range body=%s", s)
+	}
+	if strings.Contains(s, `"key":"k08"`) || strings.Contains(s, `"key":"k04"`) {
+		t.Fatalf("end exclusive / start inclusive failed: %s", s)
+	}
+}

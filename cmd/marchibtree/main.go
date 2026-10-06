@@ -42,6 +42,21 @@ func newServer(tree *btree.Tree) http.Handler {
 			"free":     tree.FreeCount(),
 		})
 	})
+	mux.HandleFunc("GET /kv", func(w http.ResponseWriter, r *http.Request) {
+		start := r.URL.Query().Get("start")
+		end := r.URL.Query().Get("end")
+		kvs := tree.Range(start, end)
+		type row struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		out := make([]row, len(kvs))
+		for i, kv := range kvs {
+			out[i] = row{Key: kv.Key, Value: string(kv.Value)}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
+	})
 	mux.HandleFunc("PUT /kv/{key}", func(w http.ResponseWriter, r *http.Request) {
 		key := r.PathValue("key")
 		body, err := io.ReadAll(r.Body)
