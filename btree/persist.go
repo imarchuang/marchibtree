@@ -20,6 +20,10 @@ type checkpointFile struct {
 }
 
 func Open(dir string, pageSize int) (*Tree, error) {
+	return OpenSync(dir, pageSize, true)
+}
+
+func OpenSync(dir string, pageSize int, syncWAL bool) (*Tree, error) {
 	if pageSize <= 0 {
 		pageSize = DefaultPageSize
 	}
@@ -31,73 +35,96 @@ func Open(dir string, pageSize int) (*Tree, error) {
 	}
 	metaPath := filepath.Join(dir, "meta.json")
 	heapPath := filepath.Join(dir, "heap.db")
+	heap, err := os.OpenFile(heapPath, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, err
+	}
+
+	var t *Tree
+	afterLSN := uint64(0)
 	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-		t := New(pageSize)
+		t = New(pageSize)
 		t.dir = dir
-		f, err := os.OpenFile(heapPath, os.O_RDWR|os.O_CREATE, 0o644)
+		t.heap = heap
+		t.syncWAL = syncWAL
+	} else {
+		raw, err := os.ReadFile(metaPath)
 		if err != nil {
+			_ = heap.Close()
 			return nil, err
 		}
-		t.heap = f
-		return t, nil
+		var meta metaFile
+		if err := json.Unmarshal(raw, &meta); err != nil {
+			_ = heap.Close()
+			return nil, err
+		}
+		if meta.PageSize != 0 {
+			pageSize = meta.PageSize
+		}
+		t = &Tree{
+			pageSize: pageSize,
+			pages:    make(map[PageID]*page),
+			root:     meta.RootPageID,
+			nextID:   meta.NextPageID,
+			height:   meta.Height,
+			dir:      dir,
+			heap:     heap,
+			dirty:    make(map[PageID]struct{}),
+			syncWAL:  syncWAL,
+		}
+		if t.height < 1 {
+			t.height = 1
+		}
+		if t.nextID == 0 {
+			t.nextID = 1
+		}
+		corrupt := false
+		buf := make([]byte, pageSize)
+		for id := PageID(0); id < t.nextID; id++ {
+			off := int64(id) * int64(pageSize)
+			n, err := heap.ReadAt(buf, off)
+			if err != nil && err != io.EOF {
+				_ = heap.Close()
+				return nil, fmt.Errorf("read page %d: %w", id, err)
+			}
+			if n < pageSize {
+				corrupt = true
+				continue
+			}
+			p, err := decodePage(buf)
+			if err != nil {
+				corrupt = true
+				continue
+			}
+			t.pages[p.id] = p
+		}
+		if _, ok := t.pages[t.root]; !ok {
+			corrupt = true
+		}
+		if cp, err := os.ReadFile(filepath.Join(dir, "checkpoint.json")); err == nil {
+			var c checkpointFile
+			if json.Unmarshal(cp, &c) == nil {
+				afterLSN = c.LSN
+				t.lsn = c.LSN
+			}
+		}
+		if corrupt {
+			fresh := New(pageSize)
+			fresh.dir = dir
+			fresh.heap = heap
+			fresh.syncWAL = syncWAL
+			t = fresh
+			afterLSN = 0
+		}
 	}
-	raw, err := os.ReadFile(metaPath)
-	if err != nil {
+
+	if err := t.openWAL(); err != nil {
+		_ = heap.Close()
 		return nil, err
 	}
-	var meta metaFile
-	if err := json.Unmarshal(raw, &meta); err != nil {
+	if err := t.replayWAL(afterLSN); err != nil {
+		_ = t.Close()
 		return nil, err
-	}
-	if meta.PageSize != 0 && meta.PageSize != pageSize {
-		pageSize = meta.PageSize
-	}
-	f, err := os.OpenFile(heapPath, os.O_RDWR|os.O_CREATE, 0o644)
-	if err != nil {
-		return nil, err
-	}
-	t := &Tree{
-		pageSize: pageSize,
-		pages:    make(map[PageID]*page),
-		root:     meta.RootPageID,
-		nextID:   meta.NextPageID,
-		height:   meta.Height,
-		dir:      dir,
-		heap:     f,
-		dirty:    make(map[PageID]struct{}),
-	}
-	if t.height < 1 {
-		t.height = 1
-	}
-	if t.nextID == 0 {
-		t.nextID = 1
-	}
-	buf := make([]byte, pageSize)
-	for id := PageID(0); id < t.nextID; id++ {
-		off := int64(id) * int64(pageSize)
-		n, err := f.ReadAt(buf, off)
-		if err != nil && err != io.EOF {
-			_ = f.Close()
-			return nil, fmt.Errorf("read page %d: %w", id, err)
-		}
-		if n < pageSize {
-			continue
-		}
-		p, err := decodePage(buf)
-		if err != nil {
-			continue
-		}
-		t.pages[p.id] = p
-	}
-	if _, ok := t.pages[t.root]; !ok {
-		_ = f.Close()
-		return nil, fmt.Errorf("root page %d missing from heap", t.root)
-	}
-	if cp, err := os.ReadFile(filepath.Join(dir, "checkpoint.json")); err == nil {
-		var c checkpointFile
-		if json.Unmarshal(cp, &c) == nil {
-			t.lsn = c.LSN
-		}
 	}
 	return t, nil
 }
@@ -148,6 +175,10 @@ func (t *Tree) checkpointLocked() error {
 func (t *Tree) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.wal != nil {
+		_ = t.wal.Close()
+		t.wal = nil
+	}
 	if t.heap != nil {
 		_ = t.heap.Close()
 		t.heap = nil
